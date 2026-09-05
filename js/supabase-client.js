@@ -47,8 +47,18 @@ async function currentProfile() {
       // self-heal: the auth account exists (e.g. signup succeeded) but the
       // profiles row never got created (interrupted signup, email
       // confirmation pending at the time, etc). Create a default one now
-      // instead of leaving the person stuck.
+      // instead of leaving the person stuck. Prefer the username they chose
+      // at signup time (stashed in localStorage before the email-confirm
+      // redirect) over a generic fallback derived from their email.
+      let pendingUsername = null;
+      try {
+        const key = "pendingUsername:" + (session.user.email || "").toLowerCase();
+        pendingUsername = localStorage.getItem(key);
+        if (pendingUsername) localStorage.removeItem(key);
+      } catch (_) {}
+
       const fallbackUsername =
+        pendingUsername ||
         (session.user.email && session.user.email.split("@")[0]) ||
         "Игрок" + session.user.id.slice(0, 4);
       const { data: created, error: createErr } = await sb
@@ -145,6 +155,15 @@ function defaultAvatar(seed) {
   return `https://api.dicebear.com/7.x/shapes/svg?seed=${encodeURIComponent(seed || "clan")}`;
 }
 
+// generic debounce for search inputs — waits `wait` ms of silence before firing
+function debounce(fn, wait = 300) {
+  let t;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...args), wait);
+  };
+}
+
 // ---------- brand ----------
 const BRAND_NAME = "Clash Nexus";
 const LOGO_URL = "assets/logo.png";
@@ -211,10 +230,10 @@ async function mountShell(activePage) {
     const rightHtml = profile
       ? `
         <div class="dropdown-wrap">
-          <button class="icon-btn" id="bell-btn" type="button" aria-label="Уведомления">${ICONS.bell}<span class="dot"></span></button>
+          <button class="icon-btn" id="bell-btn" type="button" aria-label="Уведомления">${ICONS.bell}<span class="dot" id="bell-dot"></span></button>
           <div class="dropdown-panel" id="notif-panel">
             <h4>Уведомления</h4>
-            <div class="empty-state">Пока пусто</div>
+            <div id="notif-list"><div class="empty-state">Загрузка…</div></div>
           </div>
         </div>
         <div class="dropdown-wrap">
@@ -256,6 +275,7 @@ async function mountShell(activePage) {
       const willOpen = !notifPanel.classList.contains("is-open");
       closeDropdowns();
       notifPanel.classList.toggle("is-open", willOpen);
+      if (willOpen) markNotificationsRead();
     });
     if (userBtn) userBtn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -279,13 +299,110 @@ async function mountShell(activePage) {
     if (toggleBtn && sidebarRoot) toggleBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       sidebarRoot.classList.toggle("is-open");
+      document.body.classList.toggle("sidebar-open", sidebarRoot.classList.contains("is-open"));
     });
     document.addEventListener("click", (e) => {
       if (sidebarRoot && sidebarRoot.classList.contains("is-open") && !sidebarRoot.contains(e.target) && e.target !== toggleBtn) {
         sidebarRoot.classList.remove("is-open");
+        document.body.classList.remove("sidebar-open");
       }
     });
+
+    if (profile) initNotifications(profile.id);
   }
 
   return profile;
+}
+
+// ---------- notifications ----------
+function timeAgo(iso) {
+  const diff = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (diff < 60) return "только что";
+  if (diff < 3600) return Math.floor(diff / 60) + " мин назад";
+  if (diff < 86400) return Math.floor(diff / 3600) + " ч назад";
+  return Math.floor(diff / 86400) + " дн назад";
+}
+
+async function loadNotifications() {
+  const { data } = await sb
+    .from("notifications")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(20);
+  renderNotifications(data || []);
+}
+
+function renderNotifications(items) {
+  const list = document.getElementById("notif-list");
+  const dot = document.getElementById("bell-dot");
+  if (!list) return;
+  const unread = items.filter((n) => !n.is_read).length;
+  if (dot) dot.style.display = unread ? "block" : "none";
+
+  if (!items.length) {
+    list.innerHTML = `<div class="empty-state">Пока пусто</div>`;
+    return;
+  }
+
+  list.innerHTML = items
+    .map((n) => {
+      const actions =
+        n.type === "clan_invite" && n.related_id
+          ? `<div class="notif-actions">
+              <button class="btn btn--gold btn--sm" data-invite-accept="${n.related_id}">Принять</button>
+              <button class="btn btn--ghost btn--sm" data-invite-decline="${n.related_id}">Отклонить</button>
+            </div>`
+          : "";
+      return `
+      <a href="${n.link || "#"}" class="notif-item ${n.is_read ? "" : "is-unread"}" data-notif="${n.id}">
+        <div class="notif-item__title">${escapeHtml(n.title)}</div>
+        ${n.body ? `<div class="notif-item__body">${escapeHtml(n.body)}</div>` : ""}
+        <div class="notif-item__time">${timeAgo(n.created_at)}</div>
+        ${actions}
+      </a>`;
+    })
+    .join("");
+
+  list.querySelectorAll("[data-invite-accept]").forEach((btn) =>
+    btn.addEventListener("click", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const { error } = await sb.from("clan_invitations").update({ status: "accepted" }).eq("id", btn.dataset.inviteAccept);
+      if (error) { toast(error.message, "error"); return; }
+      toast("Приглашение принято — добро пожаловать в клан!");
+      loadNotifications();
+      setTimeout(() => window.location.reload(), 600);
+    })
+  );
+  list.querySelectorAll("[data-invite-decline]").forEach((btn) =>
+    btn.addEventListener("click", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const { error } = await sb.from("clan_invitations").update({ status: "declined" }).eq("id", btn.dataset.inviteDecline);
+      if (error) { toast(error.message, "error"); return; }
+      toast("Приглашение отклонено");
+      loadNotifications();
+    })
+  );
+}
+
+async function markNotificationsRead() {
+  const { data } = await sb.from("notifications").select("id").eq("is_read", false);
+  const ids = (data || []).map((n) => n.id);
+  if (!ids.length) return;
+  await sb.from("notifications").update({ is_read: true }).in("id", ids);
+  const dot = document.getElementById("bell-dot");
+  if (dot) dot.style.display = "none";
+  document.querySelectorAll(".notif-item.is-unread").forEach((el) => el.classList.remove("is-unread"));
+}
+
+function initNotifications(profileId) {
+  loadNotifications();
+  sb.channel(`notifications-${profileId}`)
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications", filter: `profile_id=eq.${profileId}` }, () => {
+      loadNotifications();
+    })
+    .subscribe();
+  // polling fallback in case Realtime replication isn't enabled for this table
+  setInterval(loadNotifications, 15000);
 }

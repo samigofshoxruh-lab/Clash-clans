@@ -37,10 +37,6 @@
                 <input type="file" id="avatar-file" accept="image/*" style="display:none;">
                 <span id="avatar-status" style="font-size:0.8rem; color:var(--parchment-dim);"></span>
               </div>
-              <div>
-                <label for="e-avatar" style="margin-bottom:4px;">Или вставьте ссылку на аватар</label>
-                <input id="e-avatar" placeholder="https://…" style="margin-bottom:0;">
-              </div>
             </div>
           </div>
 
@@ -74,8 +70,16 @@
               </div>
             </div>
 
-            <label for="e-banner">Баннер профиля</label>
-            <input id="e-banner" placeholder="https://…">
+            <label>Баннер профиля</label>
+            <div class="settings-banner-row">
+              <div class="settings-banner-preview" id="banner-preview" style="background-image:none;"></div>
+              <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                <label for="banner-file" class="btn btn--ghost btn--sm" style="cursor:pointer; margin:0;">Изменить фото</label>
+                <input type="file" id="banner-file" accept="image/*" style="display:none;">
+                <button type="button" class="btn btn--ghost btn--sm" id="banner-remove" style="display:none;">Убрать</button>
+                <span id="banner-status" style="font-size:0.8rem; color:var(--parchment-dim);"></span>
+              </div>
+            </div>
 
             <button class="btn btn--ember" type="submit">Сохранить</button>
           </form>
@@ -130,19 +134,33 @@
   function render() {
     const avatar = profile.avatar_url || defaultAvatar(profile.username);
     document.getElementById("avatar-preview").src = avatar;
-    document.getElementById("e-avatar").value = profile.avatar_url || "";
+    pendingAvatarUrl = profile.avatar_url || null;
     document.getElementById("e-username").value = profile.username || "";
     document.getElementById("e-display").value = profile.display_name || "";
     document.getElementById("e-bio").value = profile.bio || "";
     document.getElementById("e-tag").value = profile.tag || "";
     document.getElementById("e-th").value = profile.town_hall ?? 1;
     document.getElementById("e-country").value = profile.country || "";
-    document.getElementById("e-banner").value = profile.profile_banner_url || "";
+    pendingBannerUrl = profile.profile_banner_url || null;
+    renderBannerPreview();
   }
 
-  document.getElementById("e-avatar").addEventListener("input", (e) => {
-    document.getElementById("avatar-preview").src = e.target.value.trim() || defaultAvatar(profile.username);
-  });
+  let pendingAvatarUrl = null;
+  let pendingBannerUrl = null;
+
+  function renderBannerPreview() {
+    const box = document.getElementById("banner-preview");
+    const removeBtn = document.getElementById("banner-remove");
+    if (pendingBannerUrl) {
+      box.style.backgroundImage = `url(${pendingBannerUrl})`;
+      box.classList.add("has-image");
+      removeBtn.style.display = "inline-flex";
+    } else {
+      box.style.backgroundImage = "none";
+      box.classList.remove("has-image");
+      removeBtn.style.display = "none";
+    }
+  }
 
   document.getElementById("avatar-file").addEventListener("change", async (e) => {
     const file = e.target.files[0];
@@ -157,10 +175,34 @@
       return;
     }
     const { data } = sb.storage.from("avatars").getPublicUrl(path);
-    document.getElementById("e-avatar").value = data.publicUrl;
+    pendingAvatarUrl = data.publicUrl;
     document.getElementById("avatar-preview").src = data.publicUrl;
     status.textContent = "Фото загружено — не забудь сохранить";
     toast("Фото загружено");
+  });
+
+  document.getElementById("banner-file").addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const status = document.getElementById("banner-status");
+    status.textContent = "Загрузка…";
+    const path = `${profile.id}/banner-${Date.now()}-${file.name}`;
+    const { error } = await sb.storage.from("avatars").upload(path, file, { upsert: true });
+    if (error) {
+      status.textContent = "";
+      toast("Не удалось загрузить фото: " + error.message, "error");
+      return;
+    }
+    const { data } = sb.storage.from("avatars").getPublicUrl(path);
+    pendingBannerUrl = data.publicUrl;
+    renderBannerPreview();
+    status.textContent = "Фото загружено — не забудь сохранить";
+    toast("Фото загружено");
+  });
+
+  document.getElementById("banner-remove").addEventListener("click", () => {
+    pendingBannerUrl = null;
+    renderBannerPreview();
   });
 
   document.getElementById("edit-form").addEventListener("submit", async (e) => {
@@ -172,8 +214,8 @@
       tag: document.getElementById("e-tag").value.trim() || null,
       town_hall: Number(document.getElementById("e-th").value) || 1,
       country: document.getElementById("e-country").value.trim() || null,
-      profile_banner_url: document.getElementById("e-banner").value.trim() || null,
-      avatar_url: document.getElementById("e-avatar").value.trim() || null,
+      profile_banner_url: pendingBannerUrl,
+      avatar_url: pendingAvatarUrl,
     };
     const { error } = await sb.from("profiles").update(updates).eq("id", profile.id);
     if (error) {

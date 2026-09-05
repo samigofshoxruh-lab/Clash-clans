@@ -58,9 +58,16 @@
     <h3>Галерея</h3>
     <div id="gallery-upload" style="display:none; margin-bottom:16px;">
       <input type="file" id="photo-file" accept="image/*">
+      <input type="text" id="photo-caption" placeholder="Подпись к фото (необязательно)" maxlength="140" style="margin-top:8px;">
     </div>
     <div id="gallery" class="gallery"></div>
   </section>
+
+  <div id="lightbox" class="lightbox" style="display:none;">
+    <button class="lightbox__close" id="lightbox-close" type="button" aria-label="Закрыть">&times;</button>
+    <img id="lightbox-img" src="" alt="">
+    <div id="lightbox-caption" class="lightbox__caption"></div>
+  </div>
 
   <section data-panel="roster" style="display:none;">
     <div id="roster-list"></div>
@@ -71,6 +78,13 @@
   </section>
 
   <section data-panel="manage" style="display:none;">
+    <div class="panel" style="margin-bottom:24px;">
+      <h3>Пригласить игрока</h3>
+      <p style="margin-bottom:14px;">Найди игрока по имени и отправь ему приглашение — оно появится у него в уведомлениях.</p>
+      <input type="text" id="invite-search" placeholder="Имя игрока…" autocomplete="off">
+      <div id="invite-results"></div>
+      <div id="pending-invites" style="margin-top:18px;"></div>
+    </div>
     <div class="panel" style="margin-bottom:24px;">
       <h3>Настройки клана</h3>
       <form id="settings-form">
@@ -125,7 +139,7 @@
     loadGallery();
     loadRoster();
     if (isStaff("accept")) { document.getElementById("tab-requests").style.display = "block"; loadRequests(); }
-    if (isOwnerLike()) { document.getElementById("tab-manage").style.display = "block"; fillSettings(); }
+    if (isOwnerLike()) { document.getElementById("tab-manage").style.display = "block"; fillSettings(); initInvites(); }
   }
 
   function isOwnerLike() {
@@ -200,22 +214,49 @@
   });
 
   // ---------- gallery ----------
+  let galleryData = [];
   async function loadGallery() {
     if (isOwnerLike()) document.getElementById("gallery-upload").style.display = "block";
     const { data } = await sb.from("clan_photos").select("*").eq("clan_id", clan.id).order("created_at", { ascending: false });
+    galleryData = data || [];
     const host = document.getElementById("gallery");
-    if (!data || !data.length) { host.innerHTML = `<p style="color:var(--parchment-dim)">Фотографий пока нет.</p>`; return; }
-    host.innerHTML = data.map((p) => `<img src="${p.url}" alt="${escapeHtml(p.caption || "")}" title="${escapeHtml(p.caption || "")}">`).join("");
+    if (!galleryData.length) { host.innerHTML = `<p style="color:var(--parchment-dim)">Фотографий пока нет.</p>`; return; }
+    host.innerHTML = galleryData
+      .map(
+        (p, i) => `
+      <figure class="gallery__item" data-photo="${i}">
+        <img src="${p.url}" alt="${escapeHtml(p.caption || "")}">
+        ${p.caption ? `<figcaption>${escapeHtml(p.caption)}</figcaption>` : ""}
+      </figure>`
+      )
+      .join("");
+    host.querySelectorAll("[data-photo]").forEach((el) =>
+      el.addEventListener("click", () => openLightbox(galleryData[Number(el.dataset.photo)]))
+    );
   }
+
+  function openLightbox(photo) {
+    document.getElementById("lightbox-img").src = photo.url;
+    document.getElementById("lightbox-caption").textContent = photo.caption || "";
+    document.getElementById("lightbox").style.display = "flex";
+  }
+  function closeLightbox() { document.getElementById("lightbox").style.display = "none"; }
+  document.getElementById("lightbox-close").addEventListener("click", closeLightbox);
+  document.getElementById("lightbox").addEventListener("click", (e) => { if (e.target.id === "lightbox") closeLightbox(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeLightbox(); });
+
   const photoFile = document.getElementById("photo-file");
   if (photoFile) photoFile.addEventListener("change", async (e) => {
     const file = e.target.files[0];
     if (!file) return;
+    const caption = document.getElementById("photo-caption").value.trim();
     const path = `${clan.id}/${Date.now()}-${file.name}`;
     const { error } = await sb.storage.from("clan-media").upload(path, file, { upsert: true });
     if (error) { toast(error.message, "error"); return; }
     const { data: pub } = sb.storage.from("clan-media").getPublicUrl(path);
-    await sb.from("clan_photos").insert({ clan_id: clan.id, url: pub.publicUrl, uploaded_by: profile.id });
+    await sb.from("clan_photos").insert({ clan_id: clan.id, url: pub.publicUrl, caption, uploaded_by: profile.id });
+    document.getElementById("photo-caption").value = "";
+    photoFile.value = "";
     toast("Фото добавлено");
     loadGallery();
   });
@@ -341,6 +382,82 @@
   }
 
   // ---------- manage ----------
+  // ---------- manage ----------
+  function initInvites() {
+    document.getElementById("invite-search").addEventListener(
+      "input",
+      debounce(async (e) => {
+        const q = e.target.value.trim();
+        const host = document.getElementById("invite-results");
+        if (q.length < 2) { host.innerHTML = ""; return; }
+        const { data } = await sb
+          .from("profiles")
+          .select("id, username, avatar_url, tag, clan_id")
+          .ilike("username", `%${q}%`)
+          .limit(8);
+        const candidates = (data || []).filter((p) => p.id !== profile.id);
+        host.innerHTML = candidates.length
+          ? candidates
+              .map(
+                (p) => `
+              <div class="member-row">
+                <img src="${p.avatar_url || defaultAvatar(p.username)}" alt="">
+                <div class="name">${escapeHtml(p.username)} <small>${escapeHtml(p.tag || "")}${p.clan_id ? " · уже в клане" : ""}</small></div>
+                <div class="actions"><button class="btn btn--gold btn--sm" data-invite="${p.id}" ${p.clan_id ? "disabled" : ""}>Пригласить</button></div>
+              </div>`
+              )
+              .join("")
+          : `<p style="color:var(--parchment-dim); padding:8px 0;">Никого не нашлось</p>`;
+
+        host.querySelectorAll("[data-invite]").forEach((btn) =>
+          btn.addEventListener("click", async () => {
+            const { error } = await sb.from("clan_invitations").insert({
+              clan_id: clan.id,
+              invited_profile_id: btn.dataset.invite,
+              invited_by: profile.id,
+            });
+            if (error) { toast(error.code === "23505" ? "Приглашение уже отправлено" : error.message, "error"); return; }
+            toast("Приглашение отправлено");
+            btn.disabled = true;
+            btn.textContent = "Отправлено";
+            loadPendingInvites();
+          })
+        );
+      }, 300)
+    );
+    loadPendingInvites();
+  }
+
+  async function loadPendingInvites() {
+    const { data } = await sb
+      .from("clan_invitations")
+      .select("*, profiles:invited_profile_id (username, avatar_url, tag)")
+      .eq("clan_id", clan.id)
+      .eq("status", "pending")
+      .order("created_at", { ascending: false });
+    const host = document.getElementById("pending-invites");
+    if (!data || !data.length) { host.innerHTML = ""; return; }
+    host.innerHTML =
+      `<h4 style="font-size:0.85rem; color:var(--parchment-dim); margin-bottom:10px;">Ожидают ответа</h4>` +
+      data
+        .map((inv) => {
+          const p = inv.profiles || {};
+          return `
+        <div class="member-row">
+          <img src="${p.avatar_url || defaultAvatar(p.username)}" alt="">
+          <div class="name">${escapeHtml(p.username || "Игрок")} <small>${escapeHtml(p.tag || "")}</small></div>
+          <div class="actions"><button class="btn btn--ghost btn--sm" data-cancel-invite="${inv.id}">Отменить</button></div>
+        </div>`;
+        })
+        .join("");
+    host.querySelectorAll("[data-cancel-invite]").forEach((btn) =>
+      btn.addEventListener("click", async () => {
+        await sb.from("clan_invitations").delete().eq("id", btn.dataset.cancelInvite);
+        loadPendingInvites();
+      })
+    );
+  }
+
   function fillSettings() {
     document.getElementById("e-name").value = clan.name;
     document.getElementById("e-desc").value = clan.description || "";

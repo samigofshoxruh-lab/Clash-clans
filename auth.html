@@ -13,7 +13,7 @@
 <body>
 
 <div class="auth-page">
-  <div class="auth-card">
+  <div class="auth-card" id="login-card">
     <div class="auth-card__brand"><img src="assets/logo.png" alt="">Clash Nexus</div>
     <h2 id="form-title">Вход в аккаунт</h2>
     <p id="form-sub">Продолжите свой путь к вершине</p>
@@ -37,6 +37,14 @@
       <span id="switch-text">Нет аккаунта?</span>
       <a href="#" id="switch-link">Зарегистрироваться</a>
     </div>
+  </div>
+
+  <div class="auth-card" id="confirm-card" style="display:none;">
+    <div class="auth-card__brand"><img src="assets/logo.png" alt="">Clash Nexus</div>
+    <h2>Проверь почту</h2>
+    <p>Мы отправили письмо со ссылкой подтверждения на <b id="confirm-email"></b>. Перейди по ней, а потом вернись и войди в аккаунт.</p>
+    <button class="btn btn--ghost btn--block" type="button" id="resend-btn">Отправить письмо ещё раз</button>
+    <div class="auth-switch"><a href="#" id="back-to-login">← Назад ко входу</a></div>
   </div>
 </div>
 
@@ -84,28 +92,71 @@
     try {
       if (mode === "login") {
         const { error } = await sb.auth.signInWithPassword({ email, password });
-        if (error) throw error;
+        if (error) {
+          if (/email not confirmed/i.test(error.message)) {
+            showConfirmCard(email);
+            submitBtn.disabled = false;
+            return;
+          }
+          throw error;
+        }
         toast("С возвращением!");
+        window.location.href = "dashboard.html";
       } else {
         const username = usernameInput.value.trim();
         if (!username) { toast("Введи имя игрока", "error"); submitBtn.disabled = false; return; }
+
         const { data, error } = await sb.auth.signUp({ email, password });
         if (error) throw error;
-        if (data.user) {
-          const { error: profErr } = await sb.from("profiles").insert({
-            id: data.user.id,
-            username,
-            tag: "#" + data.user.id.slice(0, 6).toUpperCase(),
-          });
-          if (profErr) throw profErr;
+
+        if (data.session) {
+          // email confirmation is disabled on this project — we're logged in immediately
+          if (data.user) {
+            const { error: profErr } = await sb.from("profiles").insert({
+              id: data.user.id,
+              username,
+              tag: "#" + data.user.id.slice(0, 6).toUpperCase(),
+            });
+            if (profErr) throw profErr;
+          }
+          toast("Аккаунт создан!");
+          window.location.href = "dashboard.html";
+        } else {
+          // email confirmation required — no session yet, so we can't create the
+          // profiles row now (RLS requires an authenticated user). Stash the
+          // chosen username; currentProfile() will use it to self-heal the
+          // profile the first time this person actually logs in.
+          try {
+            localStorage.setItem("pendingUsername:" + email.toLowerCase(), username);
+          } catch (_) {}
+          showConfirmCard(email);
         }
-        toast("Аккаунт создан!");
       }
-      window.location.href = "dashboard.html";
     } catch (err) {
       toast(err.message || "Что-то пошло не так", "error");
       submitBtn.disabled = false;
     }
+  });
+
+  function showConfirmCard(email) {
+    document.getElementById("login-card").style.display = "none";
+    document.getElementById("confirm-card").style.display = "block";
+    document.getElementById("confirm-email").textContent = email;
+    submitBtn.disabled = false;
+  }
+
+  document.getElementById("back-to-login").addEventListener("click", (e) => {
+    e.preventDefault();
+    document.getElementById("confirm-card").style.display = "none";
+    document.getElementById("login-card").style.display = "block";
+    applyMode(false);
+  });
+
+  document.getElementById("resend-btn").addEventListener("click", async () => {
+    const email = document.getElementById("confirm-email").textContent;
+    const { error } = await sb.auth.resend({ type: "signup", email });
+    if (error) toast(error.message, "error");
+    else toast("Письмо отправлено ещё раз");
   });
 
   document.getElementById("google-btn").addEventListener("click", async () => {

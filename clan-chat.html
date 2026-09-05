@@ -115,12 +115,26 @@
   function subscribeRealtime() {
     sb.channel(`clan-chat-${clanId}`)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "clan_messages", filter: `clan_id=eq.${clanId}` }, async (payload) => {
+        if (seenIds.has(payload.new.id)) return;
         const { data: p } = await sb.from("profiles").select("username, avatar_url").eq("id", payload.new.profile_id).single();
-        const log = document.getElementById("chat-log");
-        log.insertAdjacentHTML("beforeend", renderMsg({ ...payload.new, profiles: p }));
-        log.scrollTop = log.scrollHeight;
+        appendMessage({ ...payload.new, profiles: p });
       })
       .subscribe();
+
+    // fallback poller: catches messages even if Realtime replication isn't
+    // enabled in the Supabase project, so the chat never depends on it.
+    setInterval(async () => {
+      const { data } = await sb
+        .from("clan_messages")
+        .select("*, profiles:profile_id (username, avatar_url)")
+        .eq("clan_id", clanId)
+        .order("created_at", { ascending: false })
+        .limit(30);
+      (data || [])
+        .slice()
+        .reverse()
+        .forEach((m) => appendMessage(m));
+    }, 4000);
   }
 
   document.getElementById("composer").addEventListener("submit", async (e) => {
@@ -129,8 +143,13 @@
     const content = input.value.trim();
     if (!content) return;
     input.value = "";
-    const { error } = await sb.from("clan_messages").insert({ clan_id: clanId, profile_id: profile.id, content });
-    if (error) toast(error.message, "error");
+    const { data, error } = await sb
+      .from("clan_messages")
+      .insert({ clan_id: clanId, profile_id: profile.id, content })
+      .select("*, profiles:profile_id (username, avatar_url)")
+      .single();
+    if (error) { toast(error.message, "error"); return; }
+    appendMessage(data); // show instantly for the sender, don't wait on realtime
   });
 
   init();
