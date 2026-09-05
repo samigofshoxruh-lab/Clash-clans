@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Создать клан — Clash Nexus</title>
+<link rel="icon" href="assets/logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@500;600;700;800&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<style>
+  .create-wrap { max-width: 620px; margin: 0 auto; }
+  .upload-row { display: flex; gap: 14px; align-items: center; margin-bottom: 18px; }
+  .upload-row img { width: 64px; height: 64px; object-fit: cover; border: 1px solid var(--bronze-light); clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%); }
+</style>
+</head>
+<body>
+
+<div class="app-shell">
+  <aside id="sidebar-root" class="sidebar"></aside>
+  <div class="app-main">
+    <div id="topbar-root"></div>
+
+<main class="page">
+  <div class="create-wrap">
+    <h2>Основать клан</h2>
+    <p style="margin-bottom:28px;">Ты автоматически станешь владельцем и сможешь назначить со-лидеров и старейшин на странице клана.</p>
+
+    <div class="panel">
+      <form id="create-form">
+        <label for="name">Название клана</label>
+        <input id="name" required maxlength="40" placeholder="Например, Северные Драконы">
+
+        <label for="tag">Тег клана</label>
+        <input id="tag" required maxlength="12" placeholder="#DRAGON1">
+        <div class="field-hint">Уникальный идентификатор, виден всем.</div>
+
+        <label for="description">Описание</label>
+        <textarea id="description" maxlength="400" placeholder="Расскажи о духе клана, требованиях, языке общения…"></textarea>
+
+        <label for="min_trophies">Минимум кубков для вступления</label>
+        <input id="min_trophies" type="number" min="0" value="0">
+
+        <label>Знамя (баннер)</label>
+        <div class="upload-row">
+          <img id="banner-preview" src="https://api.dicebear.com/7.x/shapes/svg?seed=banner">
+          <input type="file" id="banner-file" accept="image/*">
+        </div>
+
+        <label>Герб клана</label>
+        <div class="upload-row">
+          <img id="badge-preview" src="https://api.dicebear.com/7.x/shapes/svg?seed=badge">
+          <input type="file" id="badge-file" accept="image/*">
+        </div>
+
+        <button class="btn btn--ember btn--block" type="submit" id="submit-btn">Основать клан</button>
+      </form>
+    </div>
+  </div>
+</main>
+  </div>
+</div>
+
+<script src="js/supabase-client.js"></script>
+<script>
+  mountShell("clan-create.html");
+  let profile = null;
+  let bannerUrl = null;
+  let badgeUrl = null;
+
+  async function init() {
+    profile = await requireAuth();
+  }
+  init();
+
+  async function uploadTo(fileInputId, previewId, setter) {
+    document.getElementById(fileInputId).addEventListener("change", async (e) => {
+      const file = e.target.files[0];
+      if (!file || !profile) return;
+      const path = `${profile.id}/${Date.now()}-${file.name}`;
+      const { error } = await sb.storage.from("clan-media").upload(path, file, { upsert: true });
+      if (error) { toast("Ошибка загрузки: " + error.message, "error"); return; }
+      const { data } = sb.storage.from("clan-media").getPublicUrl(path);
+      setter(data.publicUrl);
+      document.getElementById(previewId).src = data.publicUrl;
+    });
+  }
+  uploadTo("banner-file", "banner-preview", (u) => (bannerUrl = u));
+  uploadTo("badge-file", "badge-preview", (u) => (badgeUrl = u));
+
+  document.getElementById("create-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!profile) { window.location.href = "auth.html"; return; }
+    const btn = document.getElementById("submit-btn");
+    btn.disabled = true;
+
+    const payload = {
+      name: document.getElementById("name").value.trim(),
+      tag: document.getElementById("tag").value.trim(),
+      description: document.getElementById("description").value.trim(),
+      min_trophies: Number(document.getElementById("min_trophies").value) || 0,
+      banner_url: bannerUrl,
+      badge_url: badgeUrl,
+      owner_id: profile.id,
+    };
+
+    const { data, error } = await sb.from("clans").insert(payload).select().single();
+    if (error) {
+      toast(error.message, "error");
+      btn.disabled = false;
+      return;
+    }
+    toast("Клан основан!");
+    window.location.href = `clan.html?id=${data.id}`;
+  });
+</script>
+</body>
+</html>

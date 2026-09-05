@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Чат клана — Clash Nexus</title>
+<link rel="icon" href="assets/logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@500;600;700;800&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<style>
+  .chat-page { max-width: 820px; margin: 0 auto; }
+</style>
+</head>
+<body>
+
+<div class="app-shell">
+  <aside id="sidebar-root" class="sidebar"></aside>
+  <div class="app-main">
+    <div id="topbar-root"></div>
+
+<main class="page chat-page">
+  <div id="loading" class="empty-state">Открываем зал совета…</div>
+
+  <div id="chat-wrap" style="display:none;">
+    <div class="chat-shell">
+      <div class="chat-shell__head">
+        <img id="c-badge" style="width:34px;height:34px;object-fit:cover;clip-path:polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);" src="">
+        <div>
+          <h3 style="margin:0;" id="c-name"></h3>
+          <span style="font-size:0.78rem; color:var(--parchment-dim);">Чат клана — видят только участники</span>
+        </div>
+        <a href="clan.html" id="back-link" class="btn btn--ghost btn--sm" style="margin-left:auto;">К странице клана</a>
+      </div>
+      <div class="chat-log" id="chat-log"></div>
+      <form class="chat-shell__composer" id="composer">
+        <input id="msg-input" placeholder="Написать совету клана…" autocomplete="off">
+        <button class="btn btn--ember" type="submit">Отправить</button>
+      </form>
+    </div>
+  </div>
+</main>
+  </div>
+</div>
+
+<script src="js/supabase-client.js"></script>
+<script>
+  mountShell(null);
+  const clanId = new URLSearchParams(location.search).get("id");
+  let profile = null;
+
+  async function init() {
+    profile = await requireAuth();
+    if (!profile) return;
+    if (!clanId) { showDenied("Клан не указан"); return; }
+
+    const { data: membership } = await sb.from("clan_members").select("id").eq("clan_id", clanId).eq("profile_id", profile.id).maybeSingle();
+    if (!membership) { showDenied("Только участники клана видят этот чат"); return; }
+
+    const { data: clan } = await sb.from("clans").select("*").eq("id", clanId).single();
+    if (!clan) { showDenied("Клан не найден"); return; }
+
+    document.getElementById("c-badge").src = clan.badge_url || defaultAvatar(clan.tag);
+    document.getElementById("c-name").textContent = clan.name;
+    document.getElementById("back-link").href = `clan.html?id=${clan.id}`;
+
+    document.getElementById("loading").style.display = "none";
+    document.getElementById("chat-wrap").style.display = "block";
+
+    await loadMessages();
+    subscribeRealtime();
+  }
+
+  function showDenied(text) {
+    document.getElementById("loading").innerHTML = `<div class="empty-state"><h3>${escapeHtml(text)}</h3><a href="clans.html" class="btn btn--ghost btn--sm">Смотреть кланы</a></div>`;
+  }
+
+  let seenIds = new Set();
+
+  async function loadMessages() {
+    const { data } = await sb
+      .from("clan_messages")
+      .select("*, profiles:profile_id (username, avatar_url)")
+      .eq("clan_id", clanId)
+      .order("created_at", { ascending: true })
+      .limit(200);
+    const log = document.getElementById("chat-log");
+    log.innerHTML = (data || []).map(renderMsg).join("");
+    (data || []).forEach((m) => seenIds.add(m.id));
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function appendMessage(m) {
+    if (seenIds.has(m.id)) return;
+    seenIds.add(m.id);
+    const log = document.getElementById("chat-log");
+    log.insertAdjacentHTML("beforeend", renderMsg(m));
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function renderMsg(m) {
+    const p = m.profiles || {};
+    const mine = m.profile_id === profile.id;
+    return `
+      <div class="msg ${mine ? "msg--mine" : ""}">
+        <img src="${p.avatar_url || defaultAvatar(p.username)}" alt="">
+        <div>
+          <div class="meta"><span>${escapeHtml(p.username || "Игрок")}</span><span>${fmtTime(m.created_at)}</span></div>
+          <div class="bubble">${escapeHtml(m.content)}</div>
+        </div>
+      </div>`;
+  }
+
+  function subscribeRealtime() {
+    sb.channel(`clan-chat-${clanId}`)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "clan_messages", filter: `clan_id=eq.${clanId}` }, async (payload) => {
+        const { data: p } = await sb.from("profiles").select("username, avatar_url").eq("id", payload.new.profile_id).single();
+        const log = document.getElementById("chat-log");
+        log.insertAdjacentHTML("beforeend", renderMsg({ ...payload.new, profiles: p }));
+        log.scrollTop = log.scrollHeight;
+      })
+      .subscribe();
+  }
+
+  document.getElementById("composer").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const input = document.getElementById("msg-input");
+    const content = input.value.trim();
+    if (!content) return;
+    input.value = "";
+    const { error } = await sb.from("clan_messages").insert({ clan_id: clanId, profile_id: profile.id, content });
+    if (error) toast(error.message, "error");
+  });
+
+  init();
+</script>
+</body>
+</html>

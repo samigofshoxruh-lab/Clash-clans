@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Каталог кланов — Clash Nexus</title>
+<link rel="icon" href="assets/logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@500;600;700;800&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<style>
+  .search-bar { display: flex; gap: 12px; margin-bottom: 26px; flex-wrap: wrap; }
+  .search-bar input { margin-bottom: 0; flex: 1; min-width: 220px; }
+  .search-bar select { margin-bottom: 0; max-width: 200px; }
+</style>
+</head>
+<body>
+
+<div class="app-shell">
+  <aside id="sidebar-root" class="sidebar"></aside>
+  <div class="app-main">
+    <div id="topbar-root"></div>
+
+    <main class="page">
+      <div class="page__head">
+        <div>
+          <h1>Каталог кланов</h1>
+          <p>Найдите команду, которая играет в вашем ритме</p>
+        </div>
+        <a href="clan-create.html" class="btn btn--ember">+ Создать клан</a>
+      </div>
+
+      <div class="search-bar">
+        <input id="q" placeholder="Название или тег клана">
+        <select id="lang">
+          <option value="">Любой язык</option>
+          <option value="RU">RU</option>
+          <option value="EN">EN</option>
+        </select>
+        <select id="open">
+          <option value="">Любой набор</option>
+          <option value="open">Набор открыт</option>
+          <option value="closed">Набор закрыт</option>
+        </select>
+      </div>
+      <div class="search-bar">
+        <select id="sort" style="max-width:220px;">
+          <option value="new">По очкам</option>
+          <option value="members">Больше участников</option>
+          <option value="trophies">Порог кубков</option>
+        </select>
+      </div>
+
+      <div id="results" class="card-grid">
+        <div class="empty-state">Загружаем кланы…</div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="js/supabase-client.js"></script>
+<script>
+  mountShell("clans.html");
+  let all = [];
+
+  async function load() {
+    const { data, error } = await sb.from("clans").select("*");
+    if (error) {
+      document.getElementById("results").innerHTML = `<div class="empty-state"><h3>Ошибка загрузки</h3><p>${escapeHtml(error.message)}</p></div>`;
+      return;
+    }
+    all = data || [];
+    const preset = new URLSearchParams(location.search).get("q");
+    if (preset) document.getElementById("q").value = preset;
+    render();
+  }
+
+  function render() {
+    const q = document.getElementById("q").value.trim().toLowerCase();
+    const sort = document.getElementById("sort").value;
+    let list = all.filter(
+      (c) => c.name.toLowerCase().includes(q) || (c.tag || "").toLowerCase().includes(q)
+    );
+    if (sort === "new") list.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    if (sort === "members") list.sort((a, b) => b.member_count - a.member_count);
+    if (sort === "trophies") list.sort((a, b) => b.min_trophies - a.min_trophies);
+
+    const host = document.getElementById("results");
+    if (!list.length) {
+      host.innerHTML = `<div class="empty-state"><h3>Ничего не нашлось</h3><p>Попробуй другой запрос или основай свой клан.</p></div>`;
+      return;
+    }
+    host.innerHTML = list.map(clanCardHtml).join("");
+  }
+
+  function clanCardHtml(c) {
+    const badge = c.badge_url || defaultAvatar(c.tag || c.name);
+    const banner = c.banner_url ? `style="background-image:url('${c.banner_url}')"` : "";
+    const full = c.member_count >= 50;
+    return `
+      <a class="clan-card" href="clan.html?id=${c.id}">
+        <div class="clan-card__banner" ${banner}>
+          <span class="clan-card__pill">${full ? "Набор закрыт" : "Набор открыт"}</span>
+        </div>
+        <div class="clan-card__body">
+          <div class="clan-card__badge-row">
+            <img class="clan-card__badge" src="${badge}" alt="">
+            <div>
+              <p class="clan-card__name">${escapeHtml(c.name)}</p>
+              <span class="clan-card__tag">${escapeHtml(c.tag)}</span>
+            </div>
+            <span class="clan-card__level">ур. 1</span>
+          </div>
+          <p class="clan-card__desc">${escapeHtml(c.description || "Описание пока не добавлено.")}</p>
+          <div class="clan-card__footer">
+            <span>${ICONS.member} ${c.member_count}/50</span>
+            <span>${ICONS.shield} ${c.min_trophies}</span>
+            <span>${ICONS.globe} RU</span>
+          </div>
+        </div>
+      </a>`;
+  }
+
+  document.getElementById("q").addEventListener("input", render);
+  document.getElementById("sort").addEventListener("change", render);
+  document.getElementById("lang").addEventListener("change", render);
+  document.getElementById("open").addEventListener("change", render);
+  load();
+</script>
+</body>
+</html>

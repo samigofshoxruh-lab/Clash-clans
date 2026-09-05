@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Страница клана — Clash Nexus</title>
+<link rel="icon" href="assets/logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@500;600;700;800&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<style>
+  .clan-banner { height: 200px; background-size: cover; background-position: center; border: 1px solid var(--bronze); border-radius: var(--radius-lg); position: relative; margin-bottom: -46px; overflow: hidden; }
+  .clan-banner__scrim { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(20,16,12,0.1), var(--void)); }
+  .clan-head { display: flex; gap: 20px; align-items: flex-end; padding: 0 8px; position: relative; z-index: 2; margin-bottom: 24px; }
+  .clan-head img { width: 92px; height: 92px; object-fit: cover; border: 3px solid var(--void); background: var(--bronze); clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%); }
+  .role-select { width: auto; margin: 0; padding: 6px 10px; font-size: 0.8rem; }
+  .perm-checks { display: flex; gap: 14px; margin-top: 6px; flex-wrap: wrap; }
+  .perm-checks label { display: flex; align-items: center; gap: 4px; margin: 0; font-size: 0.75rem; color: var(--parchment-dim); }
+  .perm-checks input { width: auto; margin: 0; }
+</style>
+</head>
+<body>
+
+<div class="app-shell">
+  <aside id="sidebar-root" class="sidebar"></aside>
+  <div class="app-main">
+    <div id="topbar-root"></div>
+
+<div id="loading" class="page"><div class="empty-state">Загружаем клан…</div></div>
+
+<main id="clan-content" class="page" style="display:none;">
+  <div class="clan-banner" id="banner"><div class="clan-banner__scrim"></div></div>
+  <div class="clan-head">
+    <img id="badge" src="" alt="">
+    <div style="flex:1;">
+      <h1 id="c-name" style="margin-bottom:2px;"></h1>
+      <span class="badge" id="c-tag"></span>
+    </div>
+    <div id="join-box"></div>
+  </div>
+
+  <div class="stat-strip panel--tight panel" style="margin-bottom:24px;">
+    <div class="stat"><b id="c-members">0</b><span>Участников</span></div>
+    <div class="stat"><b id="c-trophies">0</b><span>Порог кубков</span></div>
+    <div class="stat"><b id="c-created">—</b><span>Основан</span></div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab is-active" data-tab="about">О клане</div>
+    <div class="tab" data-tab="roster">Состав</div>
+    <div class="tab" data-tab="requests" id="tab-requests" style="display:none;">Заявки</div>
+    <div class="tab" data-tab="manage" id="tab-manage" style="display:none;">Управление</div>
+  </div>
+
+  <section data-panel="about">
+    <p id="c-desc" style="max-width:70ch; margin-bottom:24px;"></p>
+    <h3>Галерея</h3>
+    <div id="gallery-upload" style="display:none; margin-bottom:16px;">
+      <input type="file" id="photo-file" accept="image/*">
+    </div>
+    <div id="gallery" class="gallery"></div>
+  </section>
+
+  <section data-panel="roster" style="display:none;">
+    <div id="roster-list"></div>
+  </section>
+
+  <section data-panel="requests" style="display:none;">
+    <div id="requests-list"></div>
+  </section>
+
+  <section data-panel="manage" style="display:none;">
+    <div class="panel" style="margin-bottom:24px;">
+      <h3>Настройки клана</h3>
+      <form id="settings-form">
+        <label for="e-name">Название</label>
+        <input id="e-name">
+        <label for="e-desc">Описание</label>
+        <textarea id="e-desc"></textarea>
+        <label for="e-min">Минимум кубков</label>
+        <input id="e-min" type="number" min="0">
+        <button class="btn btn--gold" type="submit">Сохранить</button>
+      </form>
+    </div>
+    <div class="panel">
+      <h3>Опасная зона</h3>
+      <p>Роспуск клана необратим — все участники, чат и заявки будут удалены.</p>
+      <button class="btn btn--danger" id="disband-btn">Распустить клан</button>
+    </div>
+  </section>
+</main>
+  </div>
+</div>
+
+<script src="js/supabase-client.js"></script>
+<script>
+  mountShell(null);
+  const clanId = new URLSearchParams(location.search).get("id");
+  let profile = null;
+  let clan = null;
+  let myMembership = null; // row in clan_members for current user, or null
+
+  if (!clanId) document.getElementById("loading").innerHTML = `<div class="empty-state"><h3>Клан не указан</h3></div>`;
+
+  async function init() {
+    profile = await currentProfile();
+    await loadClan();
+  }
+
+  async function loadClan() {
+    const { data, error } = await sb.from("clans").select("*").eq("id", clanId).single();
+    if (error || !data) {
+      document.getElementById("loading").innerHTML = `<div class="empty-state"><h3>Клан не найден</h3></div>`;
+      return;
+    }
+    clan = data;
+    if (profile) {
+      const { data: m } = await sb.from("clan_members").select("*").eq("clan_id", clanId).eq("profile_id", profile.id).maybeSingle();
+      myMembership = m || null;
+    }
+    render();
+    document.getElementById("loading").style.display = "none";
+    document.getElementById("clan-content").style.display = "block";
+    loadGallery();
+    loadRoster();
+    if (isStaff("accept")) { document.getElementById("tab-requests").style.display = "block"; loadRequests(); }
+    if (isOwnerLike()) { document.getElementById("tab-manage").style.display = "block"; fillSettings(); }
+  }
+
+  function isOwnerLike() {
+    return myMembership && (myMembership.role === "owner" || myMembership.role === "co_leader");
+  }
+  function isStaff(perm) {
+    if (!myMembership) return false;
+    if (myMembership.role === "owner" || myMembership.role === "co_leader") return true;
+    if (perm === "accept") return myMembership.can_accept_requests;
+    if (perm === "kick") return myMembership.can_kick_members;
+    if (perm === "chat") return myMembership.can_moderate_chat;
+    return false;
+  }
+
+  function render() {
+    document.title = `${clan.name} — Clash Nexus`;
+    document.getElementById("banner").style.backgroundImage = clan.banner_url ? `url(${clan.banner_url})` : "linear-gradient(135deg, oklch(0.25 0.018 264), oklch(0.16 0.014 264))";
+    document.getElementById("badge").src = clan.badge_url || defaultAvatar(clan.tag);
+    document.getElementById("c-name").textContent = clan.name;
+    document.getElementById("c-tag").textContent = clan.tag;
+    document.getElementById("c-desc").textContent = clan.description || "Описание пока не добавлено.";
+    document.getElementById("c-members").textContent = clan.member_count;
+    document.getElementById("c-trophies").textContent = clan.min_trophies;
+    document.getElementById("c-created").textContent = new Date(clan.created_at).toLocaleDateString();
+    renderJoinBox();
+  }
+
+  async function renderJoinBox() {
+    const box = document.getElementById("join-box");
+    if (!profile) { box.innerHTML = `<a href="auth.html" class="btn btn--ember">Войти, чтобы вступить</a>`; return; }
+    if (myMembership) {
+      box.innerHTML = `<a href="clan-chat.html?id=${clan.id}" class="btn btn--ember">Открыть чат клана</a>`;
+      return;
+    }
+    if (profile.clan_id) { box.innerHTML = `<span class="notice">Ты уже состоишь в другом клане</span>`; return; }
+
+    const { data: existing } = await sb
+      .from("clan_join_requests")
+      .select("*")
+      .eq("clan_id", clan.id)
+      .eq("profile_id", profile.id)
+      .eq("status", "pending")
+      .maybeSingle();
+
+    if (existing) {
+      box.innerHTML = `<span class="badge badge--pending">Заявка на рассмотрении</span>`;
+      return;
+    }
+    box.innerHTML = `<button class="btn btn--ember" id="want-join-btn">Хочу вступить</button>`;
+    document.getElementById("want-join-btn").addEventListener("click", () => {
+      const msg = prompt("Коротко расскажи о себе клану (необязательно):", "Хочу вступить в ваш клан!");
+      if (msg === null) return;
+      submitJoinRequest(msg);
+    });
+  }
+
+  async function submitJoinRequest(message) {
+    const { error } = await sb.from("clan_join_requests").insert({ clan_id: clan.id, profile_id: profile.id, message });
+    if (error) { toast(error.message, "error"); return; }
+    toast("Заявка отправлена совету клана");
+    renderJoinBox();
+  }
+
+  // ---------- tabs ----------
+  document.querySelectorAll(".tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      document.querySelectorAll(".tab").forEach((t) => t.classList.remove("is-active"));
+      tab.classList.add("is-active");
+      document.querySelectorAll("[data-panel]").forEach((p) => (p.style.display = "none"));
+      document.querySelector(`[data-panel="${tab.dataset.tab}"]`).style.display = "block";
+    });
+  });
+
+  // ---------- gallery ----------
+  async function loadGallery() {
+    if (isOwnerLike()) document.getElementById("gallery-upload").style.display = "block";
+    const { data } = await sb.from("clan_photos").select("*").eq("clan_id", clan.id).order("created_at", { ascending: false });
+    const host = document.getElementById("gallery");
+    if (!data || !data.length) { host.innerHTML = `<p style="color:var(--parchment-dim)">Фотографий пока нет.</p>`; return; }
+    host.innerHTML = data.map((p) => `<img src="${p.url}" alt="${escapeHtml(p.caption || "")}" title="${escapeHtml(p.caption || "")}">`).join("");
+  }
+  const photoFile = document.getElementById("photo-file");
+  if (photoFile) photoFile.addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const path = `${clan.id}/${Date.now()}-${file.name}`;
+    const { error } = await sb.storage.from("clan-media").upload(path, file, { upsert: true });
+    if (error) { toast(error.message, "error"); return; }
+    const { data: pub } = sb.storage.from("clan-media").getPublicUrl(path);
+    await sb.from("clan_photos").insert({ clan_id: clan.id, url: pub.publicUrl, uploaded_by: profile.id });
+    toast("Фото добавлено");
+    loadGallery();
+  });
+
+  // ---------- roster ----------
+  async function loadRoster() {
+    const { data } = await sb
+      .from("clan_members")
+      .select("*, profiles:profile_id (username, avatar_url, tag, trophies)")
+      .eq("clan_id", clan.id)
+      .order("joined_at", { ascending: true });
+    const host = document.getElementById("roster-list");
+    if (!data || !data.length) { host.innerHTML = `<p>Пока никого нет.</p>`; return; }
+
+    const canManage = isOwnerLike();
+    const canKick = isStaff("kick");
+
+    host.innerHTML = data
+      .map((m) => {
+        const p = m.profiles || {};
+        const roleOptions = ["member", "elder", "co_leader"]
+          .map((r) => `<option value="${r}" ${m.role === r ? "selected" : ""}>${roleLabel(r)}</option>`)
+          .join("");
+        return `
+        <div class="member-row" data-member="${m.id}" data-profile="${m.profile_id}">
+          <img src="${p.avatar_url || defaultAvatar(p.username)}" alt="">
+          <div class="name">
+            ${escapeHtml(p.username || "Игрок")}
+            <small>${escapeHtml(p.tag || "")} · ${p.trophies ?? 0} кубков</small>
+          </div>
+          <span class="badge badge--${m.role}">${roleLabel(m.role)}</span>
+          <div class="actions">
+            ${
+              canManage && m.role !== "owner"
+                ? `<select class="role-select" data-role-for="${m.id}">${roleOptions}</select>`
+                : ""
+            }
+            ${
+              (canKick && m.role !== "owner" && m.profile_id !== profile?.id)
+                ? `<button class="btn btn--danger btn--sm" data-kick="${m.id}">Исключить</button>`
+                : ""
+            }
+          </div>
+        </div>`;
+      })
+      .join("");
+
+    host.querySelectorAll("[data-kick]").forEach((btn) =>
+      btn.addEventListener("click", async () => {
+        if (!confirm("Исключить этого участника из клана?")) return;
+        const { error } = await sb.from("clan_members").delete().eq("id", btn.dataset.kick);
+        if (error) { toast(error.message, "error"); return; }
+        toast("Участник исключён");
+        loadRoster();
+      })
+    );
+
+    host.querySelectorAll("[data-role-for]").forEach((sel) =>
+      sel.addEventListener("change", async () => {
+        const role = sel.value;
+        const perms =
+          role === "co_leader"
+            ? { can_accept_requests: true, can_kick_members: true, can_moderate_chat: true }
+            : role === "elder"
+            ? { can_accept_requests: true, can_kick_members: false, can_moderate_chat: true }
+            : { can_accept_requests: false, can_kick_members: false, can_moderate_chat: false };
+        const { error } = await sb.from("clan_members").update({ role, ...perms }).eq("id", sel.dataset.roleFor);
+        if (error) { toast(error.message, "error"); return; }
+        toast("Роль обновлена");
+        loadRoster();
+      })
+    );
+  }
+
+  function roleLabel(r) {
+    return { owner: "Владелец", co_leader: "Со-лидер", elder: "Старейшина", member: "Участник" }[r] || r;
+  }
+
+  // ---------- requests ----------
+  async function loadRequests() {
+    const { data } = await sb
+      .from("clan_join_requests")
+      .select("*, profiles:profile_id (username, avatar_url, tag, trophies)")
+      .eq("clan_id", clan.id)
+      .eq("status", "pending")
+      .order("created_at", { ascending: true });
+    const host = document.getElementById("requests-list");
+    if (!data || !data.length) { host.innerHTML = `<div class="empty-state"><h3>Нет открытых заявок</h3><p>Как только кто-то попросится в клан, заявка появится здесь.</p></div>`; return; }
+
+    host.innerHTML = data
+      .map((r) => {
+        const p = r.profiles || {};
+        return `
+        <div class="member-row" data-req="${r.id}">
+          <img src="${p.avatar_url || defaultAvatar(p.username)}" alt="">
+          <div class="name">
+            ${escapeHtml(p.username || "Игрок")} <small>${escapeHtml(p.tag || "")} · ${p.trophies ?? 0} кубков</small>
+            <small style="color:var(--parchment);">«${escapeHtml(r.message || "Без сообщения")}»</small>
+          </div>
+          <div class="actions">
+            <button class="btn btn--gold btn--sm" data-accept="${r.id}">Принять</button>
+            <button class="btn btn--danger btn--sm" data-decline="${r.id}">Отклонить</button>
+          </div>
+        </div>`;
+      })
+      .join("");
+
+    host.querySelectorAll("[data-accept]").forEach((btn) =>
+      btn.addEventListener("click", () => decide(btn.dataset.accept, "accepted"))
+    );
+    host.querySelectorAll("[data-decline]").forEach((btn) =>
+      btn.addEventListener("click", () => decide(btn.dataset.decline, "declined"))
+    );
+  }
+
+  async function decide(id, status) {
+    const { error } = await sb.from("clan_join_requests").update({ status, decided_by: profile.id }).eq("id", id);
+    if (error) { toast(error.message, "error"); return; }
+    toast(status === "accepted" ? "Игрок принят в клан" : "Заявка отклонена");
+    loadRequests();
+    loadRoster();
+    loadClan();
+  }
+
+  // ---------- manage ----------
+  function fillSettings() {
+    document.getElementById("e-name").value = clan.name;
+    document.getElementById("e-desc").value = clan.description || "";
+    document.getElementById("e-min").value = clan.min_trophies;
+  }
+  const settingsForm = document.getElementById("settings-form");
+  if (settingsForm) settingsForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const updates = {
+      name: document.getElementById("e-name").value.trim(),
+      description: document.getElementById("e-desc").value.trim(),
+      min_trophies: Number(document.getElementById("e-min").value) || 0,
+    };
+    const { error } = await sb.from("clans").update(updates).eq("id", clan.id);
+    if (error) { toast(error.message, "error"); return; }
+    Object.assign(clan, updates);
+    render();
+    toast("Настройки сохранены");
+  });
+
+  const disbandBtn = document.getElementById("disband-btn");
+  if (disbandBtn) disbandBtn.addEventListener("click", async () => {
+    if (!confirm(`Точно распустить клан «${clan.name}»? Это необратимо.`)) return;
+    const { error } = await sb.from("clans").delete().eq("id", clan.id);
+    if (error) { toast(error.message, "error"); return; }
+    toast("Клан распущен");
+    window.location.href = "clans.html";
+  });
+
+  init();
+</script>
+</body>
+</html>

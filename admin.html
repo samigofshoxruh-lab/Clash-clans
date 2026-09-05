@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Совет старейшин — Clash Nexus</title>
+<link rel="icon" href="assets/logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@500;600;700;800&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+<div class="app-shell">
+  <aside id="sidebar-root" class="sidebar"></aside>
+  <div class="app-main">
+    <div id="topbar-root"></div>
+
+<main class="page">
+  <div id="denied" style="display:none;" class="empty-state">
+    <h3>Доступ только для администраторов сайта</h3>
+    <p>Если это ошибка — попроси текущего администратора выставить тебе флаг is_site_admin в таблице profiles.</p>
+  </div>
+
+  <div id="admin-content" style="display:none;">
+    <h2>Совет старейшин</h2>
+    <p style="margin-bottom:32px;">Полный обзор игроков и кланов платформы. Действия здесь необратимы — действуй осторожно.</p>
+
+    <div class="stat-strip panel--tight panel" style="margin-bottom:28px;">
+      <div class="stat"><b id="s-players">0</b><span>Игроков</span></div>
+      <div class="stat"><b id="s-clans">0</b><span>Кланов</span></div>
+      <div class="stat"><b id="s-messages">0</b><span>Сообщений в чатах</span></div>
+    </div>
+
+    <div class="tabs">
+      <div class="tab is-active" data-tab="players">Игроки</div>
+      <div class="tab" data-tab="clans">Кланы</div>
+    </div>
+
+    <section data-panel="players">
+      <input id="player-filter" placeholder="Фильтр по имени…" style="max-width:320px;">
+      <table class="table">
+        <thead><tr><th>Игрок</th><th>Тег</th><th>Клан</th><th>Права</th><th></th></tr></thead>
+        <tbody id="players-body"></tbody>
+      </table>
+    </section>
+
+    <section data-panel="clans" style="display:none;">
+      <input id="clan-filter" placeholder="Фильтр по названию…" style="max-width:320px;">
+      <table class="table">
+        <thead><tr><th>Клан</th><th>Тег</th><th>Владелец</th><th>Участников</th><th></th></tr></thead>
+        <tbody id="clans-body"></tbody>
+      </table>
+    </section>
+  </div>
+</main>
+  </div>
+</div>
+
+<script src="js/supabase-client.js"></script>
+<script>
+  mountShell("admin.html");
+  let players = [];
+  let clans = [];
+
+  async function init() {
+    const profile = await requireAuth();
+    if (!profile) return;
+    if (!profile.is_site_admin) {
+      document.getElementById("denied").style.display = "block";
+      return;
+    }
+    document.getElementById("admin-content").style.display = "block";
+    await loadStats();
+    await loadPlayers();
+    await loadClans();
+  }
+
+  async function loadStats() {
+    const [{ count: pc }, { count: cc }, { count: mc }] = await Promise.all([
+      sb.from("profiles").select("*", { count: "exact", head: true }),
+      sb.from("clans").select("*", { count: "exact", head: true }),
+      sb.from("clan_messages").select("*", { count: "exact", head: true }),
+    ]);
+    document.getElementById("s-players").textContent = pc ?? 0;
+    document.getElementById("s-clans").textContent = cc ?? 0;
+    document.getElementById("s-messages").textContent = mc ?? 0;
+  }
+
+  async function loadPlayers() {
+    const { data } = await sb.from("profiles").select("*, clans:clan_id (name)").order("created_at", { ascending: false });
+    players = data || [];
+    renderPlayers();
+  }
+
+  function renderPlayers() {
+    const q = document.getElementById("player-filter").value.trim().toLowerCase();
+    const body = document.getElementById("players-body");
+    const list = players.filter((p) => p.username.toLowerCase().includes(q));
+    body.innerHTML = list
+      .map(
+        (p) => `
+      <tr>
+        <td>${escapeHtml(p.username)}</td>
+        <td>${escapeHtml(p.tag || "")}</td>
+        <td>${p.clans ? escapeHtml(p.clans.name) : "—"}</td>
+        <td>${p.is_site_admin ? '<span class="badge badge--owner">Админ</span>' : "—"}</td>
+        <td><button class="btn btn--ghost btn--sm" data-toggle-admin="${p.id}" data-current="${p.is_site_admin}">${p.is_site_admin ? "Снять права" : "Сделать админом"}</button></td>
+      </tr>`
+      )
+      .join("");
+    body.querySelectorAll("[data-toggle-admin]").forEach((btn) =>
+      btn.addEventListener("click", async () => {
+        const id = btn.dataset.toggleAdmin;
+        const next = btn.dataset.current !== "true";
+        const { error } = await sb.from("profiles").update({ is_site_admin: next }).eq("id", id);
+        if (error) { toast(error.message, "error"); return; }
+        toast("Права обновлены");
+        loadPlayers();
+      })
+    );
+  }
+
+  async function loadClans() {
+    const { data } = await sb.from("clans").select("*, profiles:owner_id (username)").order("created_at", { ascending: false });
+    clans = data || [];
+    renderClans();
+  }
+
+  function renderClans() {
+    const q = document.getElementById("clan-filter").value.trim().toLowerCase();
+    const body = document.getElementById("clans-body");
+    const list = clans.filter((c) => c.name.toLowerCase().includes(q));
+    body.innerHTML = list
+      .map(
+        (c) => `
+      <tr>
+        <td><a href="clan.html?id=${c.id}">${escapeHtml(c.name)}</a></td>
+        <td>${escapeHtml(c.tag)}</td>
+        <td>${c.profiles ? escapeHtml(c.profiles.username) : "—"}</td>
+        <td>${c.member_count}</td>
+        <td><button class="btn btn--danger btn--sm" data-delete-clan="${c.id}">Распустить</button></td>
+      </tr>`
+      )
+      .join("");
+    body.querySelectorAll("[data-delete-clan]").forEach((btn) =>
+      btn.addEventListener("click", async () => {
+        if (!confirm("Распустить этот клан безвозвратно?")) return;
+        const { error } = await sb.from("clans").delete().eq("id", btn.dataset.deleteClan);
+        if (error) { toast(error.message, "error"); return; }
+        toast("Клан распущен");
+        loadClans();
+        loadStats();
+      })
+    );
+  }
+
+  document.getElementById("player-filter").addEventListener("input", renderPlayers);
+  document.getElementById("clan-filter").addEventListener("input", renderClans);
+
+  document.querySelectorAll(".tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      document.querySelectorAll(".tab").forEach((t) => t.classList.remove("is-active"));
+      tab.classList.add("is-active");
+      document.querySelectorAll("[data-panel]").forEach((p) => (p.style.display = "none"));
+      document.querySelector(`[data-panel="${tab.dataset.tab}"]`).style.display = "block";
+    });
+  });
+
+  init();
+</script>
+</body>
+</html>

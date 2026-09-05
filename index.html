@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clash Nexus — платформа кланов Clash of Clans</title>
+<meta name="description" content="Clash Nexus — находи клан по духу, основывай собственный совет, принимай заявки и общайся с игроками Clash of Clans в одном месте.">
+<link rel="icon" href="assets/logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@500;600;700;800&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<style>
+  .public-nav {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 18px 28px; border-bottom: 1px solid var(--bronze);
+    background: oklch(0.19 0.015 264 / 0.72); backdrop-filter: blur(16px);
+    position: sticky; top: 0; z-index: 50;
+  }
+  .public-nav__brand { display: flex; align-items: center; gap: 10px; font-family: var(--font-display); font-weight: 800; font-size: 1.12rem; }
+  .public-nav__brand img { width: 30px; height: 30px; }
+  .public-nav__actions { display: flex; gap: 12px; }
+</style>
+</head>
+<body>
+
+<nav class="public-nav">
+  <a href="index.html" class="public-nav__brand"><img src="assets/logo.png" alt="">Clash Nexus</a>
+  <div class="public-nav__actions">
+    <a href="auth.html" class="btn btn--ghost btn--sm">Войти</a>
+    <a href="auth.html?mode=register" class="btn btn--ember btn--sm" id="register-cta">Зарегистрироваться</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="container hero__grid">
+    <div>
+      <div class="hero__eyebrow">Совет кланов открыт</div>
+      <h1>Здесь кланы находят своих воинов, а воины — свой клан.</h1>
+      <p>Создай знамя своего клана, назначь старейшин, разбирай заявки на вступление и веди совет прямо на странице клана — без сторонних чатов и таблиц.</p>
+      <div class="hero__actions">
+        <a href="auth.html?mode=register" class="btn btn--ember">Основать клан</a>
+        <a href="clans.html" class="btn btn--ghost">Искать клан</a>
+      </div>
+    </div>
+    <div class="hero__crest-wrap">
+      <div class="hero__crest"><img src="assets/logo.png" alt=""></a></div>
+    </div>
+  </div>
+</header>
+
+<section class="section">
+  <div class="container">
+    <div class="section__head">
+      <h2>Всё, что нужно совету клана</h2>
+      <p>Каждый инструмент живёт на своей странице — быстро загружается и ничего лишнего.</p>
+    </div>
+    <div class="feature-row">
+      <div class="feature">
+        <h3>Своя страница клана</h3>
+        <p>Название, знамя, галерея, описание и открытые заявки на вступление — всё в одном месте, видимом всем.</p>
+      </div>
+      <div class="feature">
+        <h3>Совет старейшин</h3>
+        <p>Владелец назначает со-лидеров и старейшин с точными правами: принимать заявки, исключать участников, модерировать чат.</p>
+      </div>
+      <div class="feature">
+        <h3>Живой чат</h3>
+        <p>Общий чат клана для своих и личные сообщения между игроками — раздельно, без путаницы.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section section--alt">
+  <div class="container">
+    <div class="section__head">
+      <h2>Свежие кланы</h2>
+      <p>Только что созданные советы уже принимают заявки.</p>
+    </div>
+    <div id="clan-preview" class="card-grid">
+      <div class="empty-state">Загружаем список кланов…</div>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container">Clash Nexus — независимая платформа сообщества, не связана с Supercell.</div>
+</footer>
+
+<script src="js/supabase-client.js"></script>
+<script>
+  // logged-in visitors go straight to their dashboard
+  (async () => { if (await currentSession()) window.location.href = "dashboard.html"; })();
+
+  async function loadPreview() {
+    const host = document.getElementById("clan-preview");
+    const { data, error } = await sb
+      .from("clans")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(6);
+
+    if (error) {
+      host.innerHTML = `<div class="empty-state"><h3>Не удалось загрузить кланы</h3><p>${escapeHtml(error.message)}</p></div>`;
+      return;
+    }
+    if (!data.length) {
+      host.innerHTML = `<div class="empty-state"><h3>Пока нет ни одного клана</h3><p>Стань первым, кто основал совет.</p></div>`;
+      return;
+    }
+    host.innerHTML = data.map(clanCardHtml).join("");
+  }
+
+  function clanCardHtml(c) {
+    const badge = c.badge_url || defaultAvatar(c.tag || c.name);
+    const banner = c.banner_url ? `style="background-image:url('${c.banner_url}')"` : "";
+    return `
+      <a class="clan-card" href="clan.html?id=${c.id}">
+        <div class="clan-card__banner" ${banner}></div>
+        <div class="clan-card__body">
+          <div class="clan-card__badge-row">
+            <img class="clan-card__badge" src="${badge}" alt="">
+            <div>
+              <p class="clan-card__name">${escapeHtml(c.name)}</p>
+              <span class="clan-card__tag">${escapeHtml(c.tag)}</span>
+            </div>
+          </div>
+          <p class="clan-card__desc">${escapeHtml(c.description || "Описание пока не добавлено.")}</p>
+          <div class="clan-card__footer">
+            <span>${ICONS.member} ${c.member_count}/50</span>
+            <span>${ICONS.shield} ${c.min_trophies}</span>
+          </div>
+        </div>
+      </a>`;
+  }
+
+  loadPreview();
+</script>
+</body>
+</html>

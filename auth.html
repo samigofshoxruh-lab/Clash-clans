@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Вход — Clash Nexus</title>
+<link rel="icon" href="assets/logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@500;600;700;800&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+<div class="auth-page">
+  <div class="auth-card">
+    <div class="auth-card__brand"><img src="assets/logo.png" alt="">Clash Nexus</div>
+    <h2 id="form-title">Вход в аккаунт</h2>
+    <p id="form-sub">Продолжите свой путь к вершине</p>
+
+    <form id="auth-form">
+      <div id="username-field" style="display:none;">
+        <label for="username">Имя игрока</label>
+        <input id="username" placeholder="Например, ТёмныйЭльф">
+      </div>
+      <label for="email">Email</label>
+      <input id="email" type="email" required placeholder="chief@example.com">
+      <label for="password">Пароль</label>
+      <input id="password" type="password" required minlength="6" placeholder="••••••••">
+      <button class="btn btn--ember btn--block" type="submit" id="submit-btn">Войти</button>
+    </form>
+
+    <div class="auth-divider">или</div>
+    <button class="btn btn--google btn--block" type="button" id="google-btn">Войти через Google</button>
+
+    <div class="auth-switch">
+      <span id="switch-text">Нет аккаунта?</span>
+      <a href="#" id="switch-link">Зарегистрироваться</a>
+    </div>
+  </div>
+</div>
+
+<script src="js/supabase-client.js"></script>
+<script>
+  let mode = "login";
+
+  const form = document.getElementById("auth-form");
+  const usernameField = document.getElementById("username-field");
+  const usernameInput = document.getElementById("username");
+  const title = document.getElementById("form-title");
+  const sub = document.getElementById("form-sub");
+  const submitBtn = document.getElementById("submit-btn");
+  const switchText = document.getElementById("switch-text");
+  const switchLink = document.getElementById("switch-link");
+
+  function applyMode(isRegister) {
+    mode = isRegister ? "register" : "login";
+    usernameField.style.display = isRegister ? "block" : "none";
+    title.textContent = isRegister ? "Создать аккаунт" : "Вход в аккаунт";
+    sub.textContent = isRegister
+      ? "Выбери имя, под которым тебя будут знать в кланах."
+      : "Продолжите свой путь к вершине";
+    submitBtn.textContent = isRegister ? "Создать аккаунт" : "Войти";
+    switchText.textContent = isRegister ? "Уже есть аккаунт?" : "Нет аккаунта?";
+    switchLink.textContent = isRegister ? "Войти" : "Зарегистрироваться";
+  }
+
+  if (new URLSearchParams(location.search).get("mode") === "register") applyMode(true);
+
+  // if already logged in, skip straight to the dashboard
+  (async () => { if (await currentSession()) window.location.href = "dashboard.html"; })();
+
+  switchLink.addEventListener("click", (e) => {
+    e.preventDefault();
+    applyMode(mode !== "register");
+  });
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email = document.getElementById("email").value.trim();
+    const password = document.getElementById("password").value;
+    submitBtn.disabled = true;
+
+    try {
+      if (mode === "login") {
+        const { error } = await sb.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+        toast("С возвращением!");
+      } else {
+        const username = usernameInput.value.trim();
+        if (!username) { toast("Введи имя игрока", "error"); submitBtn.disabled = false; return; }
+        const { data, error } = await sb.auth.signUp({ email, password });
+        if (error) throw error;
+        if (data.user) {
+          const { error: profErr } = await sb.from("profiles").insert({
+            id: data.user.id,
+            username,
+            tag: "#" + data.user.id.slice(0, 6).toUpperCase(),
+          });
+          if (profErr) throw profErr;
+        }
+        toast("Аккаунт создан!");
+      }
+      window.location.href = "dashboard.html";
+    } catch (err) {
+      toast(err.message || "Что-то пошло не так", "error");
+      submitBtn.disabled = false;
+    }
+  });
+
+  document.getElementById("google-btn").addEventListener("click", async () => {
+    const { error } = await sb.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: window.location.origin + window.location.pathname.replace("auth.html", "dashboard.html") },
+    });
+    if (error) toast(error.message, "error");
+  });
+</script>
+</body>
+</html>

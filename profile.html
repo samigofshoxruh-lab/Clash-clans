@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Настройки — Clash Nexus</title>
+<link rel="icon" href="assets/logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@500;600;700;800&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+<div class="app-shell">
+  <aside id="sidebar-root" class="sidebar"></aside>
+  <div class="app-main">
+    <div id="topbar-root"></div>
+
+    <main class="page">
+      <div class="page__head">
+        <div>
+          <h1>Настройки</h1>
+          <p>Профиль игрока и параметры аккаунта</p>
+        </div>
+      </div>
+
+      <div id="loading" class="empty-state">Загружаем профиль…</div>
+
+      <div id="settings-content" class="settings-grid" style="display:none;">
+        <div class="panel">
+          <div class="settings-avatar-row">
+            <img id="avatar-preview" src="" alt="">
+            <div style="flex:1; display:flex; flex-direction:column; gap:12px; min-width:0;">
+              <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                <label for="avatar-file" class="btn btn--ghost btn--sm" style="cursor:pointer; margin:0;">Изменить фото</label>
+                <input type="file" id="avatar-file" accept="image/*" style="display:none;">
+                <span id="avatar-status" style="font-size:0.8rem; color:var(--parchment-dim);"></span>
+              </div>
+              <div>
+                <label for="e-avatar" style="margin-bottom:4px;">Или вставьте ссылку на аватар</label>
+                <input id="e-avatar" placeholder="https://…" style="margin-bottom:0;">
+              </div>
+            </div>
+          </div>
+
+          <form id="edit-form">
+            <div class="field-row">
+              <div>
+                <label for="e-username">Никнейм</label>
+                <input id="e-username" required>
+              </div>
+              <div>
+                <label for="e-display">Отображаемое имя</label>
+                <input id="e-display">
+              </div>
+            </div>
+
+            <label for="e-bio">О себе</label>
+            <textarea id="e-bio" placeholder="Стиль игры, опыт, любимые стратегии"></textarea>
+
+            <div class="field-row field-row--3">
+              <div>
+                <label for="e-tag">Игровой тег</label>
+                <input id="e-tag" placeholder="#ABC123">
+              </div>
+              <div>
+                <label for="e-th">Ратуша</label>
+                <input id="e-th" type="number" min="1" max="17">
+              </div>
+              <div>
+                <label for="e-country">Страна</label>
+                <input id="e-country" placeholder="Например, Узбекистан">
+              </div>
+            </div>
+
+            <label for="e-banner">Баннер профиля</label>
+            <input id="e-banner" placeholder="https://…">
+
+            <button class="btn btn--ember" type="submit">Сохранить</button>
+          </form>
+        </div>
+
+        <div>
+          <div class="panel settings-side-panel">
+            <h3>Смена пароля</h3>
+            <form id="password-form">
+              <label for="cur-pass">Текущий пароль</label>
+              <input id="cur-pass" type="password" autocomplete="current-password">
+              <label for="new-pass">Новый пароль</label>
+              <input id="new-pass" type="password" minlength="6" autocomplete="new-password">
+              <button class="btn btn--ghost btn--block" type="submit">Изменить пароль</button>
+            </form>
+          </div>
+
+          <div class="panel settings-side-panel">
+            <h3>Сессия</h3>
+            <p id="session-email" style="color:var(--gold-bright); margin-bottom:16px; word-break:break-all;"></p>
+            <button class="btn btn--danger btn--block" id="signout-btn">Выйти из аккаунта</button>
+          </div>
+
+          <div class="panel" id="clan-box">
+            <h3>Мой клан</h3>
+            <div id="clan-box-body"><p>Загрузка…</p></div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="js/supabase-client.js"></script>
+<script>
+  let profile = null;
+
+  async function init() {
+    profile = await requireAuth();
+    if (!profile) return;
+    mountShell("profile.html");
+
+    document.getElementById("loading").style.display = "none";
+    document.getElementById("settings-content").style.display = "grid";
+    render();
+    loadClanBox();
+
+    const session = await currentSession();
+    document.getElementById("session-email").textContent = session?.user?.email || "";
+  }
+
+  function render() {
+    const avatar = profile.avatar_url || defaultAvatar(profile.username);
+    document.getElementById("avatar-preview").src = avatar;
+    document.getElementById("e-avatar").value = profile.avatar_url || "";
+    document.getElementById("e-username").value = profile.username || "";
+    document.getElementById("e-display").value = profile.display_name || "";
+    document.getElementById("e-bio").value = profile.bio || "";
+    document.getElementById("e-tag").value = profile.tag || "";
+    document.getElementById("e-th").value = profile.town_hall ?? 1;
+    document.getElementById("e-country").value = profile.country || "";
+    document.getElementById("e-banner").value = profile.profile_banner_url || "";
+  }
+
+  document.getElementById("e-avatar").addEventListener("input", (e) => {
+    document.getElementById("avatar-preview").src = e.target.value.trim() || defaultAvatar(profile.username);
+  });
+
+  document.getElementById("avatar-file").addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const status = document.getElementById("avatar-status");
+    status.textContent = "Загрузка…";
+    const path = `${profile.id}/${Date.now()}-${file.name}`;
+    const { error } = await sb.storage.from("avatars").upload(path, file, { upsert: true });
+    if (error) {
+      status.textContent = "";
+      toast("Не удалось загрузить фото: " + error.message, "error");
+      return;
+    }
+    const { data } = sb.storage.from("avatars").getPublicUrl(path);
+    document.getElementById("e-avatar").value = data.publicUrl;
+    document.getElementById("avatar-preview").src = data.publicUrl;
+    status.textContent = "Фото загружено — не забудь сохранить";
+    toast("Фото загружено");
+  });
+
+  document.getElementById("edit-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const updates = {
+      username: document.getElementById("e-username").value.trim(),
+      display_name: document.getElementById("e-display").value.trim() || null,
+      bio: document.getElementById("e-bio").value.trim(),
+      tag: document.getElementById("e-tag").value.trim() || null,
+      town_hall: Number(document.getElementById("e-th").value) || 1,
+      country: document.getElementById("e-country").value.trim() || null,
+      profile_banner_url: document.getElementById("e-banner").value.trim() || null,
+      avatar_url: document.getElementById("e-avatar").value.trim() || null,
+    };
+    const { error } = await sb.from("profiles").update(updates).eq("id", profile.id);
+    if (error) {
+      toast(
+        error.message.includes("column")
+          ? "Не удалось сохранить: в базе не хватает столбцов (display_name/country/profile_banner_url). См. schema.sql — раздел миграции."
+          : error.message,
+        "error"
+      );
+      return;
+    }
+    profile = { ...profile, ...updates };
+    render();
+    mountShell("profile.html");
+    toast("Профиль обновлён");
+  });
+
+  document.getElementById("password-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const newPass = document.getElementById("new-pass").value;
+    if (!newPass || newPass.length < 6) { toast("Новый пароль должен быть не короче 6 символов", "error"); return; }
+    const { error } = await sb.auth.updateUser({ password: newPass });
+    if (error) { toast(error.message, "error"); return; }
+    document.getElementById("cur-pass").value = "";
+    document.getElementById("new-pass").value = "";
+    toast("Пароль изменён");
+  });
+
+  document.getElementById("signout-btn").addEventListener("click", signOut);
+
+  async function loadClanBox() {
+    const box = document.getElementById("clan-box-body");
+    if (!profile.clan_id) {
+      box.innerHTML = `
+        <p>Ты пока не состоишь в клане.</p>
+        <div style="display:flex; gap:10px; margin-top:14px;">
+          <a href="clans.html" class="btn btn--ghost btn--sm">Найти клан</a>
+          <a href="clan-create.html" class="btn btn--ember btn--sm">Основать свой</a>
+        </div>`;
+      return;
+    }
+    const { data: clan, error } = await sb.from("clans").select("*").eq("id", profile.clan_id).single();
+    if (error || !clan) { box.innerHTML = `<p>Не удалось загрузить клан.</p>`; return; }
+    box.innerHTML = `
+      <div class="clan-card__badge-row" style="margin-top:0; margin-bottom:14px;">
+        <img class="clan-card__badge" style="border-color:var(--stone-panel);" src="${clan.badge_url || defaultAvatar(clan.tag)}" alt="">
+        <div>
+          <p class="clan-card__name">${escapeHtml(clan.name)}</p>
+          <span class="clan-card__tag">${escapeHtml(clan.tag)}</span>
+        </div>
+      </div>
+      <div style="display:flex; gap:10px;">
+        <a href="clan.html?id=${clan.id}" class="btn btn--ghost btn--sm">Страница клана</a>
+        <a href="clan-chat.html?id=${clan.id}" class="btn btn--ember btn--sm">Открыть чат</a>
+      </div>`;
+  }
+
+  init();
+</script>
+</body>
+</html>

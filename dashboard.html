@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clash Nexus — панель управления</title>
+<link rel="icon" href="assets/logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@500;600;700;800&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+<div class="app-shell">
+  <aside id="sidebar-root" class="sidebar"></aside>
+  <div class="app-main">
+    <div id="topbar-root"></div>
+
+    <main class="page">
+      <div id="loading" class="empty-state">Загружаем панель…</div>
+
+      <div id="dash-content" style="display:none;">
+        <div class="page__head">
+          <div>
+            <h1 id="greeting">Привет!</h1>
+            <p>Ваш штаб: кланы, заявки и быстрые действия</p>
+          </div>
+          <a href="clan-create.html" class="btn btn--ember">+ Создать клан</a>
+        </div>
+
+        <div class="stat-cards">
+          <div class="stat-card">
+            <div class="stat-card__icon" id="icon-clans"></div>
+            <div>
+              <div class="stat-card__label">Мои кланы</div>
+              <div class="stat-card__value" id="stat-clans">0</div>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card__icon" id="icon-requests"></div>
+            <div>
+              <div class="stat-card__label">Заявки</div>
+              <div class="stat-card__value" id="stat-requests">0</div>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card__icon" id="icon-since"></div>
+            <div>
+              <div class="stat-card__label">Участник с</div>
+              <div class="stat-card__value" id="stat-since" style="font-size:1.05rem;">—</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="dash-section">
+          <div class="dash-section__head"><h2>Мои кланы</h2></div>
+          <div id="my-clans" class="card-grid"></div>
+        </div>
+
+        <div class="dash-section">
+          <div class="dash-section__head"><h2>Мои заявки</h2></div>
+          <div id="my-requests" class="panel panel--tight"></div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="js/supabase-client.js"></script>
+<script>
+  let profile = null;
+
+  async function init() {
+    profile = await requireAuth();
+    if (!profile) return;
+    mountShell("dashboard.html");
+
+    document.getElementById("loading").style.display = "none";
+    document.getElementById("dash-content").style.display = "block";
+    document.getElementById("greeting").textContent = `Привет, ${profile.display_name || profile.username}!`;
+    document.getElementById("stat-since").textContent = new Date(profile.created_at).toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" });
+    document.getElementById("icon-clans").innerHTML = ICONS.shield;
+    document.getElementById("icon-requests").innerHTML = ICONS.inbox;
+    document.getElementById("icon-since").innerHTML = ICONS.user;
+
+    loadMyClans();
+    loadMyRequests();
+  }
+
+  async function loadMyClans() {
+    const host = document.getElementById("my-clans");
+    if (!profile.clan_id) {
+      document.getElementById("stat-clans").textContent = "0";
+      host.innerHTML = `
+        <div class="create-clan-banner">
+          <h3>Ты пока не состоишь в клане</h3>
+          <p style="margin:0 0 16px;">Найди совет по духу или основай собственный прямо сейчас.</p>
+          <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">
+            <a href="clans.html" class="btn btn--ghost btn--sm">Искать клан</a>
+            <a href="clan-create.html" class="btn btn--ember btn--sm">Создать клан</a>
+          </div>
+        </div>`;
+      return;
+    }
+    document.getElementById("stat-clans").textContent = "1";
+
+    const [{ data: clan }, { data: membership }] = await Promise.all([
+      sb.from("clans").select("*").eq("id", profile.clan_id).maybeSingle(),
+      sb.from("clan_members").select("role").eq("clan_id", profile.clan_id).eq("profile_id", profile.id).maybeSingle(),
+    ]);
+    if (!clan) { host.innerHTML = `<div class="empty-state">Не удалось загрузить клан.</div>`; return; }
+
+    const role = membership?.role || "member";
+    const roleLabel = { owner: "Владелец", co_leader: "Со-лидер", elder: "Старейшина", member: "Участник" }[role] || "Участник";
+    const banner = clan.banner_url ? `style="background-image:url('${clan.banner_url}')"` : "";
+
+    host.innerHTML = `
+      <a class="clan-card" href="clan.html?id=${clan.id}">
+        <div class="clan-card__banner" ${banner}>
+          <span class="clan-card__pill ${role === "owner" ? "clan-card__pill--owner" : ""}">${roleLabel}</span>
+        </div>
+        <div class="clan-card__body">
+          <div class="clan-card__badge-row">
+            <img class="clan-card__badge" src="${clan.badge_url || defaultAvatar(clan.tag)}" alt="">
+            <div>
+              <p class="clan-card__name">${escapeHtml(clan.name)}</p>
+              <span class="clan-card__tag">${escapeHtml(clan.tag)}</span>
+            </div>
+            <span class="clan-card__level">ур. 1</span>
+          </div>
+          <p class="clan-card__desc">${escapeHtml(clan.description || "Описание пока не добавлено.")}</p>
+          <div class="clan-card__footer">
+            <span>${ICONS.member} ${clan.member_count}/50</span>
+            <span>${ICONS.shield} ${clan.min_trophies}</span>
+            <span>${ICONS.globe} RU</span>
+          </div>
+        </div>
+      </a>`;
+  }
+
+  async function loadMyRequests() {
+    const host = document.getElementById("my-requests");
+    const { data } = await sb
+      .from("clan_join_requests")
+      .select("*, clans:clan_id (name, tag, badge_url)")
+      .eq("profile_id", profile.id)
+      .eq("status", "pending")
+      .order("created_at", { ascending: false });
+
+    document.getElementById("stat-requests").textContent = data?.length || 0;
+
+    if (!data || !data.length) {
+      host.innerHTML = `
+        <div class="empty-state">
+          <div class="icon-circle">${ICONS.inbox}</div>
+          <h3>Заявок нет</h3>
+          <p>Подайте заявку в понравившийся клан.</p>
+        </div>`;
+      return;
+    }
+
+    host.innerHTML = data
+      .map((r) => {
+        const c = r.clans || {};
+        return `
+        <div class="member-row">
+          <img src="${c.badge_url || defaultAvatar(c.tag || c.name)}" alt="">
+          <div class="name">
+            ${escapeHtml(c.name || "Клан")}
+            <small>${escapeHtml(c.tag || "")}</small>
+          </div>
+          <span class="badge badge--pending">На рассмотрении</span>
+        </div>`;
+      })
+      .join("");
+  }
+
+  init();
+</script>
+</body>
+</html>
